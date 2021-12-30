@@ -13,7 +13,8 @@ namespace ShoFSNameSpace
             ShoFS shohdi = new ShoFS("Shohdi File System", new List<string> { "127.0.0.1" }, "sa", "P@ssw0rd", "shohdi_file_system", null, null);
 
 
-
+            shohdi.CreateDirectory("/testdir/test/t1t1/");
+            shohdi.CreateFile("/testdir/test/t1t1/shohdi.txt");
         }
     }
 

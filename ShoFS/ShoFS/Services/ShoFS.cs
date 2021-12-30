@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Cassandra;
 using DiskAccessLibrary.FileSystems.Abstractions;
+using Newtonsoft.Json;
 using SMBLibrary.Services;
 
 namespace ShoFSNameSpace.Services
@@ -41,6 +42,8 @@ namespace ShoFSNameSpace.Services
         private string osSeperator = "";
         private MyDBModel myDBData = new MyDBModel();
         private int blockSize = 4096;
+        Cluster cluster = null;
+        ISession session = null;
         public ShoFS(string FileSystemName,List<string> serverList ,string username,string password,string keyspace,int? port , int? block_size )
         {
             osSeperator = System.IO.Path.DirectorySeparatorChar.ToString();
@@ -62,14 +65,17 @@ namespace ShoFSNameSpace.Services
             this.myDBData.KeySpace = keyspace;
 
             //test db
-            var cluster = Cluster.Builder()
+             cluster = Cluster.Builder()
                          .AddContactPoints(this.myDBData.ServerIP).WithPort(this.myDBData.Port.Value).WithCredentials(this.myDBData.UserName, this.myDBData.Password)
                          .Build();
 
-            var session = cluster.Connect(this.myDBData.KeySpace);
+            session = cluster.Connect(this.myDBData.KeySpace);
             createSettings(session);
 
+            session.Execute("create table if not exists meta (path text , name text ,  entry text , primary key (path , name));");
 
+
+            session.Execute("create table if not exists chunk (path text , name text , pos bigint , chunk_data blob   , primary key (path , name,pos));");
         }
 
         private void createSettings(ISession session)
@@ -100,14 +106,119 @@ namespace ShoFSNameSpace.Services
 
         public bool SupportsNamedStreams { get; set; }
 
+        
+
         public FileSystemEntry CreateDirectory(string path)
         {
-            throw new NotImplementedException();
+            string[] paths;
+            string parentPath;
+            path = getPathData(path, out paths, out parentPath);
+
+            session = cluster.Connect(this.myDBData.KeySpace);
+
+            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
+
+            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+            string ent = "";
+            foreach (var row in rows)
+            {
+                ent = row.GetValue<string>("entry");
+                return JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+            }
+
+            FileSystemEntry entry = new FileSystemEntry(path, paths[paths.Length - 1], true, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
+            ent = JsonConvert.SerializeObject(entry);
+
+            var qrCreate = session.Prepare("insert into meta (path,name,entry) values (?,?,?) ;");
+            session.Execute(qrCreate.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1], ent));
+
+
+            return entry;
+        }
+
+        private string getPathData(string path, out string[] paths, out string parentPath)
+        {
+            paths = checkPath(ref path);
+            List<string> allExceptMe = new List<string>();
+            for (int i = 0; i < paths.Length - 1; i++)
+            {
+                allExceptMe.Add(paths[i]);
+            }
+
+            parentPath = "";
+            if (allExceptMe.Count > 0)
+            {
+                //found parent
+                parentPath = this.osSeperator + String.Join(this.osSeperator[0], allExceptMe);
+
+            }
+
+            if (allExceptMe.Count > 0)
+            {
+                CreateDirectory(parentPath);
+            }
+
+            return path;
+        }
+
+        private string[] checkPath(ref string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new ArgumentException("wrong path!");
+            }
+            path = path.Trim();
+
+            if (path.EndsWith(this.osSeperator))
+            {
+                path = path.Substring(0, path.Length - 1);
+            }
+
+            string[] paths = path.Split(new string[] { this.osSeperator }, StringSplitOptions.RemoveEmptyEntries);
+            if (paths.Length < 1)
+            {
+                throw new ArgumentException("wrong path!");
+            }
+
+            return paths;
         }
 
         public FileSystemEntry CreateFile(string path)
         {
-            throw new NotImplementedException();
+            string[] paths;
+            string parentPath;
+            path = getPathData(path, out paths, out parentPath);
+
+            session = cluster.Connect(this.myDBData.KeySpace);
+
+            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
+
+            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+            string ent = "";
+            foreach (var row in rows)
+            {
+                ent = row.GetValue<string>("entry");
+                var entryCheck = JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+                if (entryCheck.IsDirectory)
+                {
+                    throw new ArgumentException("Directory with same name already exists!");
+                }
+                else
+                {
+                    return entryCheck;
+                }
+            }
+
+            FileSystemEntry entry = new FileSystemEntry(path, paths[paths.Length - 1], false, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
+            ent = JsonConvert.SerializeObject(entry);
+
+            var qrCreate = session.Prepare("insert into meta (path,name,entry) values (?,?,?) ;");
+            session.Execute(qrCreate.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1], ent));
+
+
+            return entry;
+
+
         }
 
         public void Delete(string path)
