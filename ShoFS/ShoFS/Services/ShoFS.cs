@@ -112,7 +112,12 @@ namespace ShoFSNameSpace.Services
         {
             string[] paths;
             string parentPath;
-            path = getPathData(path, out paths, out parentPath);
+            List<string> allExceptMe ;
+            path = getPathData(path, out paths, out parentPath,out allExceptMe);
+            if (allExceptMe.Count > 0)
+            {
+                CreateDirectory(parentPath);
+            }
 
             session = cluster.Connect(this.myDBData.KeySpace);
 
@@ -136,10 +141,10 @@ namespace ShoFSNameSpace.Services
             return entry;
         }
 
-        private string getPathData(string path, out string[] paths, out string parentPath)
+        private string getPathData(string path, out string[] paths, out string parentPath , out List<string> allExceptMe)
         {
             paths = checkPath(ref path);
-            List<string> allExceptMe = new List<string>();
+            allExceptMe = new List<string>();
             for (int i = 0; i < paths.Length - 1; i++)
             {
                 allExceptMe.Add(paths[i]);
@@ -153,10 +158,7 @@ namespace ShoFSNameSpace.Services
 
             }
 
-            if (allExceptMe.Count > 0)
-            {
-                CreateDirectory(parentPath);
-            }
+           
 
             return path;
         }
@@ -187,7 +189,8 @@ namespace ShoFSNameSpace.Services
         {
             string[] paths;
             string parentPath;
-            path = getPathData(path, out paths, out parentPath);
+            List<string> allExceptMe;
+            path = getPathData(path, out paths, out parentPath, out allExceptMe);
 
             session = cluster.Connect(this.myDBData.KeySpace);
 
@@ -223,12 +226,45 @@ namespace ShoFSNameSpace.Services
 
         public void Delete(string path)
         {
-            throw new NotImplementedException();
+            string[] paths;
+            string parentPath;
+            List<string> allExceptMe;
+            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+
+            session = cluster.Connect(this.myDBData.KeySpace);
+
+            var qr = session.Prepare("delete from meta where path = ? and name = ? ;");
+            session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+            qr = session.Prepare("delete from chunk where path = ? and name = ? ;");
+            session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+
+
+
         }
 
         public FileSystemEntry GetEntry(string path)
         {
-            throw new NotImplementedException();
+            string[] paths;
+            string parentPath;
+            List<string> allExceptMe;
+            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+
+            session = cluster.Connect(this.myDBData.KeySpace);
+
+            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
+
+            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+            string ent = "";
+            foreach (var row in rows)
+            {
+                ent = row.GetValue<string>("entry");
+                return JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+            }
+
+
+            throw new FileNotFoundException();
+
+
         }
 
         public List<KeyValuePair<string, ulong>> ListDataStreams(string path)
