@@ -5,4 +5,18 @@
     <TargetFramework>netcoreapp3.1</TargetFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="SMBLibrary" />
+    <None Remove="CassandraCSharpDriver" />
+    <None Remove="Services\" />
+    <None Remove="DiskAccessLibrary.FileSystems.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="SMBLibrary" Version="1.4.8" />
+    <PackageReference Include="CassandraCSharpDriver" Version="3.17.1" />
+    <PackageReference Include="DiskAccessLibrary.FileSystems.Abstractions" Version="1.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Services\" />
+  </ItemGroup>
 </Project>
