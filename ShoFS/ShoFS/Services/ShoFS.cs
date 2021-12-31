@@ -115,6 +115,7 @@ namespace ShoFSNameSpace.Services
             path = getPathData(path, out paths, out parentPath, out allExceptMe);
 
             ret.name = paths[paths.Length - 1];
+            
             ret.parent_path = parentPath == "" ? "root" : parentPath;
             if(ret.parent_path == "root")
             {
@@ -208,7 +209,7 @@ namespace ShoFSNameSpace.Services
 
 
            
-            if (!string.IsNullOrWhiteSpace(myPath.parent_path))
+            if (!string.IsNullOrWhiteSpace(myPath.parent_path) && myPath.parent_path != "root")
             {
                 CreateDirectory(myPath.parent_path);
             }
