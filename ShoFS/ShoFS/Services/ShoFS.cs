@@ -37,16 +37,38 @@ namespace ShoFSNameSpace.Services
     }
 
 
+    public class PathData
+    {
+        public string parent_id { get; set; }
+
+        public string path_id { get; set; }
+
+        public string path { get; set; }
+
+        public string parent_path { get; set; }
+
+
+        public string name { get; set; }
+
+        public FileSystemEntry pathEntry { get; set; }
+
+       
+
+
+
+    }
+
+
     public class ShoFS : IFileSystem
     {
-        private string osSeperator = "";
+        private string osSeperator = "/";
         private MyDBModel myDBData = new MyDBModel();
         private int blockSize = 4096;
         Cluster cluster = null;
         ISession session = null;
         public ShoFS(string FileSystemName,List<string> serverList ,string username,string password,string keyspace,int? port , int? block_size )
         {
-            osSeperator = System.IO.Path.DirectorySeparatorChar.ToString();
+            
             this.Name = FileSystemName;
             this.Size = long.MaxValue - 1;
             this.FreeSpace = long.MaxValue - 1;
@@ -69,13 +91,84 @@ namespace ShoFSNameSpace.Services
                          .AddContactPoints(this.myDBData.ServerIP).WithPort(this.myDBData.Port.Value).WithCredentials(this.myDBData.UserName, this.myDBData.Password)
                          .Build();
 
-            session = cluster.Connect(this.myDBData.KeySpace);
-            createSettings(session);
+            using (session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                createSettings(session);
 
-            session.Execute("create table if not exists meta (path text , name text ,  entry text , primary key (path , name));");
+                session.Execute("create table if not exists path_id (path text primary key , id text );");
+
+                session.Execute("create table if not exists meta (parent_id text , id text ,  entry text , primary key (parent_id , id));");
 
 
-            session.Execute("create table if not exists chunk (path text , name text , pos bigint , chunk_data blob   , primary key (path , name,pos));");
+                session.Execute("create table if not exists chunk (parent_id text , id text , pos bigint , chunk_data blob   , primary key (parent_id , id,pos));");
+            }
+        }
+
+        private PathData getPathData(string path)
+        {
+            path = path.Trim();
+            PathData ret = new PathData();
+
+            string[] paths;
+            string parentPath;
+            List<string> allExceptMe;
+            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+
+            ret.name = paths[paths.Length - 1];
+            ret.parent_path = parentPath == "" ? "root" : parentPath;
+            if(ret.parent_path == "root")
+            {
+                ret.parent_id = "root";
+            }
+            ret.path = path;
+
+            using (var session = cluster.Connect(myDBData.KeySpace))
+            {
+                var qr = session.Prepare("select * from path_id where path = ?");
+
+                var rows = session.Execute(qr.Bind(ret.path));
+
+                foreach (var row in rows)
+                {
+                    ret.path_id = row.GetValue<string>("id");
+                    break;
+                }
+
+                if(ret.parent_path != "root")
+                {
+                    qr = session.Prepare("select * from path_id where path = ?");
+
+                    rows = session.Execute(qr.Bind(ret.parent_path));
+
+                    foreach (var row in rows)
+                    {
+                        ret.parent_id = row.GetValue<string>("id");
+
+                        break;
+                    }
+                }
+                
+
+
+                if(!string.IsNullOrWhiteSpace(ret.path_id))
+                {
+                    qr = session.Prepare("select * from meta where parent_id  = ? and id=?");
+
+                    rows = session.Execute(qr.Bind(ret.parent_id,ret.path_id));
+
+                    foreach (var row in rows)
+                    {
+                        ret.pathEntry = JsonConvert.DeserializeObject<FileSystemEntry>( row.GetValue<string>("entry"));
+
+                        break;
+                    }
+                }
+
+            }
+
+
+            return ret;
+
         }
 
         private void createSettings(ISession session)
@@ -110,35 +203,42 @@ namespace ShoFSNameSpace.Services
 
         public FileSystemEntry CreateDirectory(string path)
         {
-            string[] paths;
-            string parentPath;
-            List<string> allExceptMe ;
-            path = getPathData(path, out paths, out parentPath,out allExceptMe);
-            if (allExceptMe.Count > 0)
+
+            PathData myPath = this.getPathData(path);
+
+
+           
+            if (!string.IsNullOrWhiteSpace(myPath.parent_path))
             {
-                CreateDirectory(parentPath);
+                CreateDirectory(myPath.parent_path);
             }
 
-            session = cluster.Connect(this.myDBData.KeySpace);
+            myPath = this.getPathData(path);
 
-            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
-
-            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
-            string ent = "";
-            foreach (var row in rows)
+            if (myPath.pathEntry != null)
             {
-                ent = row.GetValue<string>("entry");
-                return JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+                return myPath.pathEntry;
             }
 
-            FileSystemEntry entry = new FileSystemEntry(path, paths[paths.Length - 1], true, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
-            ent = JsonConvert.SerializeObject(entry);
+            using (session = cluster.Connect(this.myDBData.KeySpace))
+            {
 
-            var qrCreate = session.Prepare("insert into meta (path,name,entry) values (?,?,?) ;");
-            session.Execute(qrCreate.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1], ent));
+                
+
+                FileSystemEntry entry = new FileSystemEntry(myPath.path, myPath.name, true, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
+                string ent = JsonConvert.SerializeObject(entry);
+
+                var qrCreate = session.Prepare("insert into path_id (path,id) values (?,?);");
+                myPath.path_id = System.Guid.NewGuid().ToString();
+                session.Execute(qrCreate.Bind(myPath.path, myPath.path_id ));
 
 
-            return entry;
+                qrCreate = session.Prepare("insert into meta (parent_id,id,entry) values (?,?,?) ;");
+                session.Execute(qrCreate.Bind(myPath.parent_id,myPath.path_id, ent));
+
+
+                return entry;
+            }
         }
 
         private string getPathData(string path, out string[] paths, out string parentPath , out List<string> allExceptMe)
@@ -170,6 +270,7 @@ namespace ShoFSNameSpace.Services
                 throw new ArgumentException("wrong path!");
             }
             path = path.Trim();
+            path = path.Replace("\\", this.osSeperator);
 
             if (path.EndsWith(this.osSeperator))
             {
@@ -191,6 +292,10 @@ namespace ShoFSNameSpace.Services
             string parentPath;
             List<string> allExceptMe;
             path = getPathData(path, out paths, out parentPath, out allExceptMe);
+            if (allExceptMe.Count > 0)
+            {
+                CreateDirectory(parentPath);
+            }
 
             session = cluster.Connect(this.myDBData.KeySpace);
 
@@ -224,12 +329,41 @@ namespace ShoFSNameSpace.Services
 
         }
 
+        private bool haveChilds(string path)
+        {
+            string[] paths;
+            string parentPath;
+            List<string> allExceptMe;
+            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+            session = cluster.Connect(this.myDBData.KeySpace);
+
+            var qr = session.Prepare("delete from meta where path = ?  ;");
+            var rows =session.Execute(qr.Bind(path));
+
+            bool haveChilds = false;
+            foreach (var row in rows)
+            {
+                haveChilds = true;
+                break;
+            }
+
+            return haveChilds;
+
+
+
+        }
+
         public void Delete(string path)
         {
             string[] paths;
             string parentPath;
             List<string> allExceptMe;
             path = getPathData(path, out paths, out parentPath, out allExceptMe);
+
+            if (haveChilds(path))
+            {
+                throw new FileLoadException("Directory not empty");
+            }
 
             session = cluster.Connect(this.myDBData.KeySpace);
 
@@ -269,7 +403,13 @@ namespace ShoFSNameSpace.Services
 
         public List<KeyValuePair<string, ulong>> ListDataStreams(string path)
         {
-            throw new NotImplementedException();
+            FileSystemEntry entry = GetEntry(path);
+            List<KeyValuePair<string, ulong>> result = new List<KeyValuePair<string, ulong>>();
+            if (!entry.IsDirectory)
+            {
+                result.Add(new KeyValuePair<string, ulong>("::$DATA", entry.Size));
+            }
+            return result;
         }
 
         public List<FileSystemEntry> ListEntriesInDirectory(string path)
@@ -296,5 +436,7 @@ namespace ShoFSNameSpace.Services
         {
             throw new NotImplementedException();
         }
+
+        
     }
 }
