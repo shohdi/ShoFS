@@ -14,7 +14,9 @@ namespace ShoFSNameSpace
 
 
             shohdi.CreateDirectory("/testdir/test/t1t1/");
-            //shohdi.CreateFile("/testdir/test/t1t1/shohdi.txt");
+            shohdi.CreateFile("shohdi.txt");
+            shohdi.CreateFile("\\testdir\\test\\shohdi1.txt");
+
             //shohdi.Delete("/testdir/test/t1t1");
         }
     }

@@ -115,13 +115,18 @@ namespace ShoFSNameSpace.Services
             path = getPathData(path, out paths, out parentPath, out allExceptMe);
 
             ret.name = paths[paths.Length - 1];
-            
+            ret.path = path;
+
             ret.parent_path = parentPath == "" ? "root" : parentPath;
             if(ret.parent_path == "root")
             {
                 ret.parent_id = "root";
+                if(!ret.path.StartsWith(this.osSeperator))
+                {
+                    ret.path = this.osSeperator + ret.path;
+                }
             }
-            ret.path = path;
+            
 
             using (var session = cluster.Connect(myDBData.KeySpace))
             {
@@ -160,7 +165,7 @@ namespace ShoFSNameSpace.Services
                     foreach (var row in rows)
                     {
                         ret.pathEntry = JsonConvert.DeserializeObject<FileSystemEntry>( row.GetValue<string>("entry"));
-
+                        ret.pathEntry.FullName = ret.path;
                         break;
                     }
                 }
@@ -311,7 +316,11 @@ namespace ShoFSNameSpace.Services
             var ent = JsonConvert.SerializeObject(entry);
             using (session = cluster.Connect(this.myDBData.KeySpace))
             {
-                var qrCreate = session.Prepare("insert into meta (parent_id,id,entry) values (?,?,?) ;");
+                var qrCreate = session.Prepare("insert into path_id (path,id) values (?,?);");
+                pathData.path_id = System.Guid.NewGuid().ToString();
+                session.Execute(qrCreate.Bind(pathData.path, pathData.path_id));
+
+                qrCreate = session.Prepare("insert into meta (parent_id,id,entry) values (?,?,?) ;");
                 session.Execute(qrCreate.Bind(pathData.parent_id, pathData.path_id, ent));
 
 
