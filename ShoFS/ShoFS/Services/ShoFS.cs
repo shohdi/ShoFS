@@ -336,48 +336,27 @@ namespace ShoFSNameSpace.Services
 
         }
 
-        private bool haveChilds(string path)
-        {
-            string[] paths;
-            string parentPath;
-            List<string> allExceptMe;
-            path = getPathData(path, out paths, out parentPath, out allExceptMe);
-            session = cluster.Connect(this.myDBData.KeySpace);
-
-            var qr = session.Prepare("delete from meta where path = ?  ;");
-            var rows =session.Execute(qr.Bind(path));
-
-            bool haveChilds = false;
-            foreach (var row in rows)
-            {
-                haveChilds = true;
-                break;
-            }
-
-            return haveChilds;
-
-
-
-        }
+        
 
         public void Delete(string path)
         {
-            string[] paths;
-            string parentPath;
-            List<string> allExceptMe;
-            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+            var pathData = getPathData(path);
 
-            if (haveChilds(path))
+            if(string.IsNullOrWhiteSpace(pathData.path_id))
             {
-                throw new FileLoadException("Directory not empty");
+                throw new FileNotFoundException();
             }
 
-            session = cluster.Connect(this.myDBData.KeySpace);
-
-            var qr = session.Prepare("delete from meta where path = ? and name = ? ;");
-            session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
-            qr = session.Prepare("delete from chunk where path = ? and name = ? ;");
-            session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
+            using (session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                
+                var qr = session.Prepare("delete from path_id where id = ? ;");
+                session.Execute(qr.Bind(pathData.path_id));
+                qr = session.Prepare("delete from meta where parent_id = ? and id = ? ;");
+                session.Execute(qr.Bind(pathData.parent_id,pathData.path_id));
+                qr = session.Prepare("delete from chunk where parent_id = ? and id = ? ;");
+                session.Execute(qr.Bind(pathData.parent_id, pathData.path_id));
+            }
 
 
 
@@ -385,21 +364,11 @@ namespace ShoFSNameSpace.Services
 
         public FileSystemEntry GetEntry(string path)
         {
-            string[] paths;
-            string parentPath;
-            List<string> allExceptMe;
-            path = getPathData(path, out paths, out parentPath, out allExceptMe);
+            var pathData = this.getPathData(path);
 
-            session = cluster.Connect(this.myDBData.KeySpace);
-
-            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
-
-            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
-            string ent = "";
-            foreach (var row in rows)
+            if(pathData.pathEntry != null)
             {
-                ent = row.GetValue<string>("entry");
-                return JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+                return pathData.pathEntry;
             }
 
 
@@ -410,11 +379,16 @@ namespace ShoFSNameSpace.Services
 
         public List<KeyValuePair<string, ulong>> ListDataStreams(string path)
         {
-            FileSystemEntry entry = GetEntry(path);
+            
             List<KeyValuePair<string, ulong>> result = new List<KeyValuePair<string, ulong>>();
-            if (!entry.IsDirectory)
+            var pathData = this.getPathData(path);
+            FileSystemEntry entry = pathData.pathEntry;
+            if (entry != null)
             {
-                result.Add(new KeyValuePair<string, ulong>("::$DATA", entry.Size));
+                if (!entry.IsDirectory)
+                {
+                    result.Add(new KeyValuePair<string, ulong>("::$DATA", entry.Size));
+                }
             }
             return result;
         }
