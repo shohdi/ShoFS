@@ -289,43 +289,40 @@ namespace ShoFSNameSpace.Services
 
         public FileSystemEntry CreateFile(string path)
         {
-            string[] paths;
-            string parentPath;
-            List<string> allExceptMe;
-            path = getPathData(path, out paths, out parentPath, out allExceptMe);
-            if (allExceptMe.Count > 0)
+            var pathData = getPathData(path);
+            if (pathData.parent_path != "root")
             {
-                CreateDirectory(parentPath);
+                CreateDirectory(pathData.parent_path);
             }
 
-            session = cluster.Connect(this.myDBData.KeySpace);
-
-            var qr = session.Prepare("select * from meta where path = ? and name = ? ;");
-
-            var rows = session.Execute(qr.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1]));
-            string ent = "";
-            foreach (var row in rows)
+            if (pathData.pathEntry != null)
             {
-                ent = row.GetValue<string>("entry");
-                var entryCheck = JsonConvert.DeserializeObject<FileSystemEntry>(ent);
-                if (entryCheck.IsDirectory)
+                if( pathData.pathEntry.IsDirectory)
                 {
                     throw new ArgumentException("Directory with same name already exists!");
                 }
                 else
                 {
-                    return entryCheck;
+                    return pathData.pathEntry;
                 }
             }
 
-            FileSystemEntry entry = new FileSystemEntry(path, paths[paths.Length - 1], false, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
-            ent = JsonConvert.SerializeObject(entry);
+            FileSystemEntry entry = new FileSystemEntry(pathData.path, pathData.name, false, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
+            var ent = JsonConvert.SerializeObject(entry);
+            using (session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qrCreate = session.Prepare("insert into meta (parent_id,id,entry) values (?,?,?) ;");
+                session.Execute(qrCreate.Bind(pathData.parent_id, pathData.path_id, ent));
 
-            var qrCreate = session.Prepare("insert into meta (path,name,entry) values (?,?,?) ;");
-            session.Execute(qrCreate.Bind(parentPath == "" ? "root" : parentPath, paths[paths.Length - 1], ent));
 
+                return entry;
+            }
 
-            return entry;
+            
+
+            
+
+           
 
 
         }
