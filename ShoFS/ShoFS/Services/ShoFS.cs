@@ -482,12 +482,55 @@ namespace ShoFSNameSpace.Services
 
         public void SetAttributes(string path, bool? isHidden, bool? isReadonly, bool? isArchived)
         {
-            throw new NotImplementedException();
+
+            var myData = this.getPathData(path);
+
+            if (myData.pathEntry == null)
+            {
+                throw new FileNotFoundException();
+            }
+
+            System.Console.WriteLine("SetAttributes " + myData.path);
+
+            if(isHidden != null)
+                myData.pathEntry.IsHidden = isHidden.GetValueOrDefault();
+            if (isReadonly != null)
+                myData.pathEntry.IsReadonly = isReadonly.GetValueOrDefault();
+            if (isArchived != null)
+                myData.pathEntry.IsArchived = isArchived.GetValueOrDefault();
+            updateEntry(myData);
+
+        }
+
+        private void updateEntry(PathData myData)
+        {
+            using (var session = cluster.Connect(myDBData.KeySpace))
+            {
+                var ent = JsonConvert.SerializeObject(myData.pathEntry);
+                var qr = session.Prepare("update meta set entry = ? where parent_id = ? and id = ? ;");
+                session.Execute(qr.Bind(ent, myData.parent_id, myData.path_id));
+            }
         }
 
         public void SetDates(string path, DateTime? creationDT, DateTime? lastWriteDT, DateTime? lastAccessDT)
         {
-            throw new NotImplementedException();
+            var myData = this.getPathData(path);
+
+            if (myData.pathEntry == null)
+            {
+                throw new FileNotFoundException();
+            }
+
+            System.Console.WriteLine("SetDates " + myData.path);
+
+            if (creationDT != null)
+                myData.pathEntry.CreationTime = creationDT.GetValueOrDefault();
+            if (lastWriteDT != null)
+                myData.pathEntry.LastWriteTime = lastWriteDT.GetValueOrDefault();
+            if (lastAccessDT != null)
+                myData.pathEntry.LastAccessTime = lastAccessDT.GetValueOrDefault();
+
+            updateEntry(myData);
         }
 
         
