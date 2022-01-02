@@ -22,7 +22,7 @@ namespace ShoFSNameSpace
 
             shohdi.ListEntriesInDirectory("/testdir");
 
-            shohdi.Delete("/testdir/test");
+            shohdi.Delete("\\testdir\\test\\shohdi1.txt");
         }
     }
 
