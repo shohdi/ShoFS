@@ -518,6 +518,56 @@ namespace ShoFSNameSpace.Services
 
             }
 
+            updateChilds(destData);
+
+        }
+
+        private void updateChilds(PathData destData)
+        {
+            using (var session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qr = session.Prepare("select * from meta where parent_id = ? ;");
+                var rows = session.Execute(qr.Bind(destData.path_id));
+                foreach (var row in rows)
+                {
+                    var ent = row.GetValue<string>("entry");
+                    var entry = JsonConvert.DeserializeObject<FileSystemEntry>(ent);
+                    var rowid = row.GetValue<string>("id");
+
+                    var rowPath = destData.path == "root" ? "" : destData.path + this.osSeperator + entry.Name;
+
+                    qr = session.Prepare("select * from id_path where id = ? ;");
+                    var oldRows = session.Execute(qr.Bind(rowid));
+                    string oldPath = null;
+                    foreach (var oldRow in oldRows)
+                    {
+                        oldPath = oldRow.GetValue<string>("path");
+                    }
+
+                    qr = session.Prepare("insert into path_id (path,id) values (?,?) ;");
+                    session.Execute(qr.Bind(rowPath, rowid));
+
+                    if (oldPath != null)
+                    {
+                        qr = session.Prepare("delete from path_id where path = ? ;");
+                        session.Execute(qr.Bind(oldPath));
+                    }
+
+                    qr = session.Prepare("update id_path set path = ? where id = ? ;");
+                    session.Execute(qr.Bind(rowPath, rowid));
+                    if (entry.IsDirectory)
+                    {
+                        PathData rowData = new PathData();
+                        rowData.parent_id = destData.path_id;
+                        rowData.parent_path = destData.path;
+                        rowData.path = rowPath;
+                        rowData.path_id = rowid;
+                        rowData.pathEntry = entry;
+                        rowData.name = entry.Name;
+                        this.updateChilds(rowData);
+                    }
+                }
+            }
         }
 
         public Stream OpenFile(string path, FileMode mode, FileAccess access, FileShare share, FileOptions options)
