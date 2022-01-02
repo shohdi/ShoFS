@@ -9,6 +9,153 @@ using SMBLibrary.Services;
 namespace ShoFSNameSpace.Services
 {
 
+    public class FSStream : Stream
+    {
+        MyDBModel dbModel = null;
+        PathData path = null;
+        FileMode mode ;
+        FileAccess access ;
+        FileShare share;
+        FileOptions options;
+        Cluster cluster;
+        long blockSize;
+
+        public FSStream(MyDBModel _dbModel,PathData _path,FileMode _mode,FileAccess _access,FileShare _share , FileOptions _options,Cluster _cluster,long _blockSize)
+        {
+            this.dbModel = _dbModel;
+            this.path = _path;
+            this.mode = _mode;
+            this.access = _access;
+            this.share = _share;
+            this.options = _options;
+            this.cluster = _cluster;
+            this.blockSize = _blockSize;
+
+            if (this.access == FileAccess.Read || this.access == FileAccess.ReadWrite)
+            {
+                this._canRead = true;
+            }
+            else
+            {
+                this._canRead = false;
+            }
+
+            if (this.access == FileAccess.Write || this.access == FileAccess.ReadWrite)
+            {
+                this._canWrite = true;
+            }
+            else
+            {
+                this._canWrite = false;
+            }
+
+            this._canSeek = true;
+
+            this._length = (long)this.path.pathEntry.Size;
+
+            if(mode == FileMode.Append)
+            {
+                this.Position = this._length;
+            }
+            else
+            {
+                this.Position = 0;
+            }
+        }
+
+        private bool _canRead = true;
+        public override bool CanRead { get { return _canRead; } }
+
+
+        private bool _canSeek = true;
+        public override bool CanSeek { get { return _canSeek; } }
+
+        private bool _canWrite = false;
+        public override bool CanWrite { get { return _canWrite; } }
+
+
+        private long _length = 0;
+        public override long Length {get { return _length; } }
+
+
+        public override long Position { get; set; } = 0;
+
+        public override void Flush()
+        {
+            
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            
+            
+            int readed = 0;
+
+            using (var session = cluster.Connect(dbModel.KeySpace))
+            {
+                
+                while (readed < count && Position < Length)
+                {
+                    var pos = (long)(this.Position / this.blockSize);
+                    var qr = session.Prepare("select * from chunk where id=? and pos=? ;");
+                    var rows = session.Execute(qr.Bind(this.path.path_id,pos));
+                    Row row = null;
+                    foreach(var rowin in rows)
+                    {
+                        row = rowin;
+                        break;
+                    }
+
+                    byte[] btData = new byte[0];
+                    if(row != null)
+                    {
+                        btData = row.GetValue<byte[]>("chunk_data");
+
+                    }
+                    
+                    while(btData != null && btData.Length > 0 && this.Position < ((pos * blockSize) + btData.Length) && readed < count && Position < Length)
+                    {
+                        var ind = this.Position - ((pos * blockSize));
+                        buffer[offset + readed] = btData[ind];
+                        readed++;
+                        this.Position++;
+                    }
+
+                }
+
+                return readed;
+            }
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            if(origin == SeekOrigin.Begin)
+            {
+                this.Position = offset;
+            }
+            else if (origin == SeekOrigin.Current)
+            {
+                this.Position = this.Position + offset;
+            }
+            else if(origin == SeekOrigin.End)
+            {
+                this.Position = this.Length - offset;
+            }
+
+            return this.Position;
+        }
+
+        public override void SetLength(long value)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
     public class MyDBModel
     {
         public MyDBModel()
@@ -572,7 +719,15 @@ namespace ShoFSNameSpace.Services
 
         public Stream OpenFile(string path, FileMode mode, FileAccess access, FileShare share, FileOptions options)
         {
-            throw new NotImplementedException();
+            if (mode == FileMode.Create || mode == FileMode.CreateNew || mode == FileMode.OpenOrCreate)
+            {
+                var entry =  CreateFile(path);
+                
+            }
+
+            var pathData = getPathData(path);
+            return new FSStream(this.myDBData, pathData, mode, access, share, options,this.cluster,this.blockSize);
+
         }
 
         public void SetAttributes(string path, bool? isHidden, bool? isReadonly, bool? isArchived)
