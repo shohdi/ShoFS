@@ -102,7 +102,7 @@ namespace ShoFSNameSpace.Services
                 session.Execute("create table if not exists meta (parent_id text , id text ,  entry text , primary key (parent_id , id));");
 
 
-                session.Execute("create table if not exists chunk (parent_id text , id text , pos bigint , chunk_data blob   , primary key (parent_id , id,pos));");
+                session.Execute("create table if not exists chunk ( id text , pos bigint , chunk_data blob   , primary key ( id,pos));");
             }
         }
 
@@ -374,8 +374,8 @@ namespace ShoFSNameSpace.Services
                 deletePathId(pathData.path,pathData.path_id, session);
                 var qr = session.Prepare("delete from meta where parent_id = ? and id = ? ;");
                 session.Execute(qr.Bind(pathData.parent_id, pathData.path_id));
-                qr = session.Prepare("delete from chunk where parent_id = ? and id = ? ;");
-                session.Execute(qr.Bind(pathData.parent_id, pathData.path_id));
+                qr = session.Prepare("delete from chunk where id = ? ;");
+                session.Execute(qr.Bind( pathData.path_id));
             }
 
 
@@ -472,7 +472,52 @@ namespace ShoFSNameSpace.Services
 
         public void Move(string source, string destination)
         {
-            throw new NotImplementedException();
+
+            var sourceData = this.getPathData(source);
+            if(sourceData.pathEntry == null)
+            {
+                throw new FileNotFoundException();
+            }
+
+            var destData = this.getPathData(destination);
+            if(destData.pathEntry != null)
+            {
+                this.Delete(destData.path);
+                destData = this.getPathData(destination);
+            }
+
+            if(destData.parent_path != "root")
+            {
+                this.CreateDirectory(destData.parent_path);
+                destData = this.getPathData(destination);
+            }
+
+            System.Console.WriteLine("move " + sourceData.path + " to " + destData.path );
+
+            destData.path_id = sourceData.path_id;
+            destData.pathEntry = sourceData.pathEntry;
+            destData.pathEntry.FullName = destData.path;
+
+            using (var session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qr = session.Prepare("insert into path_id (path ,id) values (?,?) ;");
+                session.Execute(qr.Bind(destData.path, destData.path_id));
+                qr = session.Prepare("delete from path_id where path = ? ;");
+                session.Execute(qr.Bind(sourceData.path));
+                qr = session.Prepare("update id_path set path = ? where id = ? ;");
+                session.Execute(qr.Bind(destData.path,destData.path_id));
+
+                qr = session.Prepare("insert into meta (parent_id ,id,entry) values (?,?,?) ;");
+                session.Execute(qr.Bind(destData.parent_id, destData.path_id,JsonConvert.SerializeObject(destData.pathEntry)));
+
+                qr = session.Prepare("delete from meta where parent_id = ? and id = ? ;");
+                session.Execute(qr.Bind(sourceData.parent_id,sourceData.path_id));
+
+                
+
+
+            }
+
         }
 
         public Stream OpenFile(string path, FileMode mode, FileAccess access, FileShare share, FileOptions options)
