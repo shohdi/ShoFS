@@ -26,9 +26,9 @@ namespace ShoFSNameSpace
                 shohdi.addAccess("/share", "Users", true, true);
                 List<FileAccessModel> access = shohdi.getAccess("/share");
                 FileSystemShare share = InitializeShare("/share", "/share", access.Where(u => u.read).Select(a => a.user).ToList(), access.Where(u => u.write).Select(a => a.user).ToList(), shohdi);
-                IPAddress serverAddress = IPAddress.Parse("127.0.0.1");
+                IPAddress serverAddress = IPAddress.Parse("192.168.100.69");
 
-                SMBTransportType transportType = SMBTransportType.NetBiosOverTCP;
+                SMBTransportType transportType = SMBTransportType.DirectTCPTransport;
                 GetUserPassword userPassword = new GetUserPassword((username) => username);
                 NTLMAuthenticationProviderBase authenticationMechanism = new IndependentNTLMAuthenticationProvider(userPassword);
                 SMBShareCollection shares = new SMBShareCollection();
