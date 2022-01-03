@@ -19,6 +19,8 @@ namespace ShoFSNameSpace.Services
         FileOptions options;
         Cluster cluster;
         long blockSize;
+        private long writePosition;
+        private List<byte> writeBytes = new List<byte>();
 
         public FSStream(MyDBModel _dbModel,PathData _path,FileMode _mode,FileAccess _access,FileShare _share , FileOptions _options,Cluster _cluster,long _blockSize)
         {
@@ -61,6 +63,8 @@ namespace ShoFSNameSpace.Services
             {
                 this.Position = 0;
             }
+
+            this.writePosition = this.Position;
         }
 
         private bool _canRead = true;
@@ -80,10 +84,104 @@ namespace ShoFSNameSpace.Services
 
         public override long Position { get; set; } = 0;
 
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            int written = 0;
+            while (written < count)
+            {
+                this.writeBytes.Add(buffer[offset + written]);
+                written++;
+                if ((Position + written) % this.blockSize == 0)
+                {
+                    this.Flush();
+                }
+            }
+        }
+
         public override void Flush()
         {
-            
+            if (this.writeBytes == null || this.writeBytes.Count == 0)
+            {
+                this.writeBytes = new List<byte>();
+                return;
+            }
+            var pos = (int)(this.Position / this.blockSize);
+            byte[] foundArr = null;
+            using (var session = cluster.Connect(this.dbModel.KeySpace))
+            {
+                var qr = session.Prepare("select * from chunk where id=? and pos=? ;");
+                var row = this.firstOrDefault(session.Execute(qr.Bind(this.path.path_id,pos)));
+                if(row != null)
+                {
+                    foundArr = row.GetValue<byte[]>("chunk_data");
+                    qr = session.Prepare("delete  from chunk where id=? and pos=? ;");
+                    session.Execute(qr.Bind(this.path.path_id,pos));
+
+
+                }
+
+                List<byte> lstChunk = new List<byte>();
+
+                if (foundArr == null || foundArr.Length == 0)
+                {
+                    lstChunk = createChunk(pos);
+                }
+                else
+                {
+                    lstChunk.AddRange(foundArr);
+                }
+
+
+                var currentPos  = this.Position - (pos * this.blockSize);
+                int place = 0;
+                while (currentPos < this.blockSize )
+                {
+                    if(currentPos >= lstChunk.Count)
+                    {
+                        lstChunk.Add(this.writeBytes[place]);
+                        
+
+                    }
+                    else
+                    {
+                        lstChunk[(int)currentPos] = this.writeBytes[place];
+                    }
+
+                    place++;
+                    this.Position++;
+                    currentPos = this.Position - (pos * this.blockSize);
+                }
+
+                qr = session.Prepare("insert into chunk (id,pos,chunk_data) values (?,?,?) ;");
+                session.Execute(qr.Bind(this.path.path_id,pos,lstChunk.ToArray()));
+                this.writeBytes = new List<byte>();
+
+
+
+            }
         }
+
+        private List<byte> createChunk(long pos)
+        {
+            List<byte> ret = new List<byte>();
+            long count = this.Position - (pos * this.blockSize);
+            byte[] bt = new byte[count];
+            ret.AddRange(bt);
+            return ret;
+        }
+
+        private Row firstOrDefault(RowSet rows)
+        {
+            Row ret = null;
+            foreach (var row in rows)
+            {
+                ret = row;
+                break;
+            }
+
+            return ret;
+        }
+
 
         public override int Read(byte[] buffer, int offset, int count)
         {
@@ -147,13 +245,17 @@ namespace ShoFSNameSpace.Services
 
         public override void SetLength(long value)
         {
-            throw new NotImplementedException();
+            this._length = value;
+            this.path.pathEntry.Size = (ulong)value;
+            using (var session = cluster.Connect(dbModel.KeySpace))
+            {
+                var qr = session.Prepare("update meta set entry = ? where parent_id = ? and id = ? ;");
+                session.Execute(qr.Bind(JsonConvert.SerializeObject(this.path.pathEntry), this.path.parent_id,this.path.path_id));
+
+            }
         }
 
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            throw new NotImplementedException();
-        }
+        
     }
 
     public class MyDBModel
