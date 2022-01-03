@@ -10,11 +10,13 @@
     <None Remove="CassandraCSharpDriver" />
     <None Remove="Services\" />
     <None Remove="DiskAccessLibrary.FileSystems.Abstractions" />
+    <None Remove="SMBLibrary.Adapters" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SMBLibrary" Version="1.4.8" />
     <PackageReference Include="CassandraCSharpDriver" Version="3.17.1" />
     <PackageReference Include="DiskAccessLibrary.FileSystems.Abstractions" Version="1.0.0" />
+    <PackageReference Include="SMBLibrary.Adapters" Version="1.4.8" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Services\" />

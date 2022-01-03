@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Cassandra;
 using DiskAccessLibrary.FileSystems.Abstractions;
 using Newtonsoft.Json;
@@ -308,12 +309,27 @@ namespace ShoFSNameSpace.Services
     }
 
 
+    public class FileAccessModel
+    {
+        public string path { get; set; }
+
+        public string path_id { get; set; }
+
+        public string user { get; set; }
+
+        public bool read { get; set; }
+
+        public bool write { get; set; }
+    }
+
     public class ShoFS : IFileSystem
     {
         private string osSeperator = "/";
         private MyDBModel myDBData = new MyDBModel();
         private int blockSize = 4096;
         Cluster cluster = null;
+
+
         
         public ShoFS(string FileSystemName,List<string> serverList ,string username,string password,string keyspace,int? port , int? block_size )
         {
@@ -352,6 +368,8 @@ namespace ShoFSNameSpace.Services
 
 
                 session.Execute("create table if not exists chunk ( id text , pos bigint , chunk_data blob   , primary key ( id,pos));");
+
+                session.Execute("create table if not exists path_access ( id text,user text ,read boolean,write boolean   , primary key ( id,user));");
             }
         }
 
@@ -456,7 +474,64 @@ namespace ShoFSNameSpace.Services
 
         public bool SupportsNamedStreams { get; set; }
 
-        
+        public void addAccess (string path,string user,bool read , bool write)
+        {
+            PathData myPath = this.getPathData(path);
+            System.Console.WriteLine("add access " + path);
+            using(var session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qr = session.Prepare("delete from path_access where id=? and user=?;");
+                session.Execute(qr.Bind(myPath.path_id,user));
+                qr = session.Prepare("insert into path_access(id,user,read,write) values (?,?,?,?);");
+                session.Execute(qr.Bind(myPath.path_id,user,read,write));
+            }
+        }
+
+        public void revokeAccess(string path, string user, bool read, bool write)
+        {
+            PathData myPath = this.getPathData(path);
+            System.Console.WriteLine("add access " + path);
+            using (var session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qr = session.Prepare("delete from path_access where id=? and user=?;");
+                session.Execute(qr.Bind(myPath.path_id, user));
+                
+            }
+        }
+
+        public List<FileAccessModel> getAccess(string path)
+        {
+            List<FileAccessModel> lstRet = new List<FileAccessModel>();
+            PathData myPath = this.getPathData(path);
+            System.Console.WriteLine("get access " + path);
+            using (var session = cluster.Connect(this.myDBData.KeySpace))
+            {
+                var qr = session.Prepare("select * from path_access where id=? ;");
+                var rows = session.Execute(qr.Bind(myPath.path_id));
+                foreach (var row in rows)
+                {
+                    FileAccessModel item = new FileAccessModel();
+                    item.path = myPath.path;
+                    item.path_id = myPath.path_id;
+                    item.read = row.GetValue<bool>("read");
+                    item.write = row.GetValue<bool>("write");
+                    item.user = row.GetValue<string>("user");
+                    lstRet.Add(item);
+
+                    if(myPath.parent_id != "root" && myPath.parent_id != null)
+                    {
+                        var lstParent =  this.getAccess(myPath.parent_path);
+                        var currentUsers = lstRet.Select(s => s.user).ToList();
+                        var parentAdd = lstParent.Where(p => !currentUsers.Contains(p.user)).ToList();
+
+                        lstRet.AddRange(parentAdd);
+                    }
+                }
+
+                return lstRet;
+
+            }
+        }
 
         public FileSystemEntry CreateDirectory(string path)
         {
