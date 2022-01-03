@@ -828,6 +828,7 @@ namespace ShoFSNameSpace.Services
             }
 
             var pathData = getPathData(path);
+            System.Console.WriteLine("return stream for " + pathData.path);
             return new FSStream(this.myDBData, pathData, mode, access, share, options,this.cluster,this.blockSize);
 
         }
