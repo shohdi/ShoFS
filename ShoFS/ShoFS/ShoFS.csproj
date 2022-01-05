@@ -13,6 +13,7 @@
     <None Remove="SMBLibrary.Adapters" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="DokanNet" Version="1.5.0" />
     <PackageReference Include="SMBLibrary" Version="1.4.8" />
     <PackageReference Include="CassandraCSharpDriver" Version="3.17.1" />
     <PackageReference Include="DiskAccessLibrary.FileSystems.Abstractions" Version="1.0.0" />
