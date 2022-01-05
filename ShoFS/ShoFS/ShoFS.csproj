@@ -19,7 +19,4 @@
     <PackageReference Include="DiskAccessLibrary.FileSystems.Abstractions" Version="1.0.0" />
     <PackageReference Include="SMBLibrary.Adapters" Version="1.4.8" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Services\" />
-  </ItemGroup>
 </Project>
