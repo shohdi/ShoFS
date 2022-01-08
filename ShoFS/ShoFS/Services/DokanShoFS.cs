@@ -564,6 +564,7 @@ namespace DokanShoFSNamespace.Services
             indexStr = removeSpaces.Replace(indexStr, " ");
 
             string[] indexArr = indexStr.Split(new string[] { " " }, StringSplitOptions.RemoveEmptyEntries);
+			indexArr = indexArr.Distinct().ToArray();
             return indexArr;
         }
 
