@@ -7,7 +7,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace DokanShoFSNamespace.Services
 {
@@ -32,8 +34,73 @@ namespace DokanShoFSNamespace.Services
 
 	}
 
+    public class ShoFileInfo : IDokanFileInfo
+    {
+		[JsonIgnore]
+		public object Context
+		{
+			get
+			{
+				return _context;
+			}
+			set
+			{
+				_context = (ulong)value;
+			}
+		}
 
-	public class FileSystemEntry
+		private ulong _context;
+
+		public ulong LongContext { get {
+				return _context;
+			} set {
+				_context = value;
+			} }
+
+
+		public bool DeleteOnClose { get; set; } = false;
+		public bool IsDirectory { get; set; }
+
+
+		
+		public bool NoCacheSet { get; set; }
+        public bool NoCache { get { return NoCacheSet; } }
+
+
+		public bool PagingIoSet { get; set; }
+
+		public bool PagingIo { get { return PagingIoSet; } }
+
+
+		public int ProcessIdSet { get; set; }
+
+		public int ProcessId { get { return ProcessIdSet; } }
+
+
+		public bool SynchronousIoSet { get; set; }
+
+		public bool SynchronousIo { get { return SynchronousIoSet; } }
+
+
+		public bool WriteToEndOfFileSet { get; set; }
+
+		public bool WriteToEndOfFile { get { return WriteToEndOfFileSet; } }
+
+		public WindowsIdentity Requester { get; set; }
+
+        public WindowsIdentity GetRequestor()
+        {
+			return Requester;
+        }
+
+        public bool TryResetTimeout(int milliseconds)
+        {
+            return true;
+        }
+    }
+
+
+    public class FileSystemEntry
 	{
 		public string FullName { get; set; }
 
@@ -129,6 +196,10 @@ namespace DokanShoFSNamespace.Services
 				session.Execute("create table if not exists path_id (path text primary key , id text );");
 
 				session.Execute("create table if not exists id_path (id text primary key , path text );");
+
+				session.Execute("create table if not exists name_id (name text,id text ,primary key(name,id) );");
+
+				session.Execute("create table if not exists id_name (id text , name text ,primary key(id,name) );");
 
 				session.Execute("create table if not exists meta (parent_id text , id text ,  entry text , primary key (parent_id , id));");
 
@@ -352,23 +423,34 @@ namespace DokanShoFSNamespace.Services
 		{
 			string path = fileName;
 				var pathData = getPathData(path);
-				System.Console.WriteLine("create file " + pathData.path);
-				if (pathData.parent_path != "root")
-				{
-					CreateDirectory(pathData.parent_path);
-				}
+			if (info.IsDirectory)
+			{
+				System.Console.WriteLine("create directory " + pathData.path);
 
-				if (pathData.pathEntry != null)
+			}
+			else
+            {
+				System.Console.WriteLine("create File " + pathData.path);
+			}
+			if (pathData.parent_path != "root")
+            {
+                ShoFileInfo fileInfo = copyFileInfo(info);
+				fileInfo.IsDirectory = true;
+
+                this.CreateFile(pathData.parent_path, access, share, mode, options, attributes, fileInfo);
+            }
+
+            if (pathData.pathEntry != null)
+			{
+				if ((pathData.pathEntry.Attributes & FileAttributes.Directory) > 0)
 				{
-					if ((pathData.pathEntry.Attributes & FileAttributes.Directory) > 0)
-					{
-						throw new ArgumentException("Directory with same name already exists!");
-					}
-					else
-					{
-						return NtStatus.Success;
-					}
+					throw new ArgumentException("Directory with same name already exists!");
 				}
+				else
+				{
+					return NtStatus.Success;
+				}
+			}
 
 			FileSystemEntry entry = new FileSystemEntry();
 			entry.Attributes = attributes;
@@ -406,60 +488,88 @@ namespace DokanShoFSNamespace.Services
 
 			}
 
-		public FileSystemEntry CreateDirectory(string path)
-		{
+        private static ShoFileInfo copyFileInfo(IDokanFileInfo info)
+        {
+            ShoFileInfo fileInfo = new ShoFileInfo();
+            //fileInfo.LongContext = (ulong)info.Context;
+            fileInfo.DeleteOnClose = info.DeleteOnClose;
+            fileInfo.IsDirectory = info.IsDirectory;
+            fileInfo.NoCacheSet = info.NoCache;
+            fileInfo.PagingIoSet = info.PagingIo;
+            fileInfo.ProcessIdSet = info.ProcessId;
+            fileInfo.Requester = info.GetRequestor();
+            fileInfo.SynchronousIoSet = info.SynchronousIo;
+            fileInfo.WriteToEndOfFileSet = info.WriteToEndOfFile;
+            return fileInfo;
+        }
 
-			PathData myPath = this.getPathData(path);
-			System.Console.WriteLine("create directory " + myPath.path);
+
+        public static  PreparedStatement create_path_id(PathData myPath, ISession session)
+        {
+            PreparedStatement qrCreate = session.Prepare("insert into path_id (path,id) values (?,?);");
+            myPath.path_id = System.Guid.NewGuid().ToString();
+            session.Execute(qrCreate.Bind(myPath.path, myPath.path_id));
+
+            qrCreate = session.Prepare("insert into id_path (id,path) values (?,?);");
+
+            session.Execute(qrCreate.Bind(myPath.path_id, myPath.path));
+
+            string[] indexArr = getIndexValues(myPath.path);
+
+            foreach (var str in indexArr)
+            {
+				qrCreate = session.Prepare("insert into id_name (id,name) values (?,?);");
+
+				session.Execute(qrCreate.Bind(myPath.path_id, str));
 
 
-			if (!string.IsNullOrWhiteSpace(myPath.parent_path) && myPath.parent_path != "root")
-			{
-				CreateDirectory(myPath.parent_path);
+				qrCreate = session.Prepare("insert into name_id (name,id) values (?,?);");
+
+				session.Execute(qrCreate.Bind(str,myPath.path_id));
 			}
 
-			myPath = this.getPathData(path);
-
-			if (myPath.pathEntry != null)
-			{
-				return myPath.pathEntry;
-			}
-
-			using (var session = cluster.Connect(this.myDBData.KeySpace))
-			{
 
 
 
-				FileSystemEntry entry = new FileSystemEntry(myPath.path, myPath.name, true, 0, DateTime.Now, DateTime.Now, DateTime.Now, false, false, false);
-				string ent = JsonConvert.SerializeObject(entry);
+            return qrCreate;
+        }
 
-				PreparedStatement qrCreate = null;
-				qrCreate = create_path_id(myPath, session);
+        public static string[] getIndexValues(string text)
+        {
+            Regex removeSpaces = new Regex("[\\s\\t\\n\\r]+");
 
-				qrCreate = session.Prepare("insert into meta (parent_id,id,entry) values (?,?,?) ;");
-				session.Execute(qrCreate.Bind(myPath.parent_id, myPath.path_id, ent));
-
-
-				return entry;
-			}
-		}
-
-		private static PreparedStatement create_path_id(PathData myPath, ISession session)
-		{
-			PreparedStatement qrCreate = session.Prepare("insert into path_id (path,id) values (?,?);");
-			myPath.path_id = System.Guid.NewGuid().ToString();
-			session.Execute(qrCreate.Bind(myPath.path, myPath.path_id));
-
-			qrCreate = session.Prepare("insert into id_path (id,path) values (?,?);");
-
-			session.Execute(qrCreate.Bind(myPath.path_id, myPath.path));
-			return qrCreate;
-		}
+            Regex regRemoveAllButLettersSpacesNumbers = new Regex("[^a-zA-Z0-9 ابتثجحخدذرزسشصضطظعغفقكلمنهويءئ]+");
+            Regex alf = new Regex("[آأإ]");
 
 
 
+            string indexStr = text;
+            indexStr = indexStr.Trim();
+            indexStr = alf.Replace(indexStr, "ا");
+            indexStr = indexStr.Replace("ى", "ي");
+            indexStr = indexStr.Replace("ة", "ه");
+            indexStr = indexStr.Replace("٠", "0");
+            indexStr = indexStr.Replace("١", "1");
+            indexStr = indexStr.Replace("٢", "2");
+            indexStr = indexStr.Replace("٣", "3");
+            indexStr = indexStr.Replace("٤", "4");
+            indexStr = indexStr.Replace("٥", "5");
+            indexStr = indexStr.Replace("٦", "6");
+            indexStr = indexStr.Replace("٧", "7");
+            indexStr = indexStr.Replace("٨", "8");
+            indexStr = indexStr.Replace("٩", "9");
 
-		public DokanNet.NtStatus DeleteDirectory(string fileName, DokanNet.IDokanFileInfo info)
+            indexStr = regRemoveAllButLettersSpacesNumbers.Replace(indexStr, " ");
+
+            indexStr = removeSpaces.Replace(indexStr, " ");
+
+            string[] indexArr = indexStr.Split(new string[] { " " }, StringSplitOptions.RemoveEmptyEntries);
+            return indexArr;
+        }
+
+
+
+        public DokanNet.NtStatus DeleteDirectory(string fileName, DokanNet.IDokanFileInfo info)
 		{
 			throw new NotImplementedException();
 		}

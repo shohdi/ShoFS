@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using DokanShoFSNamespace.Services;
 using ShoFSNameSpace.Services;
 using SMBLibrary;
 using SMBLibrary.Adapters;
@@ -18,11 +19,13 @@ namespace ShoFSNameSpace
     {
         static void Main(string[] args)
         {
-            Thread thNew = new Thread(() => {
+            //Thread thNew = new Thread(() => {
                 Console.WriteLine("start test db!");
-                ShoFS shohdi = new ShoFS("Shohdi File System", new List<string> { "127.0.0.1" }, "sa", "P@ssw0rd", "shohdi_file_system", null, null);
+                DokanShoFS shohdi = new DokanShoFS("Shohdi File System", new List<string> { "127.0.0.1" }, "sa", "P@ssw0rd", "shohdi_file_system", null, null);
 
-                shohdi.CreateDirectory("/share");
+                shohdi.CreateFile("/share/shohdi/test/1.txt",DokanNet.FileAccess.GenericAll,FileShare.ReadWrite,FileMode.OpenOrCreate,FileOptions.Asynchronous,System.IO.FileAttributes.Normal,new ShoFileInfo());
+
+                /*
                 shohdi.addAccess("/share", "Users", true, true);
                 List<FileAccessModel> access = shohdi.getAccess("/share");
                 FileSystemShare share = InitializeShare("/share", "/share", access.Where(u => u.read).Select(a => a.user).ToList(), access.Where(u => u.write).Select(a => a.user).ToList(), shohdi);
@@ -61,7 +64,7 @@ namespace ShoFSNameSpace
 
             thNew.Start();
             thNew.Join();
-
+                */
             
         }
 
