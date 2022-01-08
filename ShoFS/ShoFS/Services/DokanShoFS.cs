@@ -147,7 +147,7 @@ namespace DokanShoFSNamespace.Services
 
 		public System.IO.FileOptions options { get; set; }
 
-		public IDokanFileInfo FileInfo { get; set; }
+		public ShoFileInfo FileInfo { get; set; }
 
 
 	}
@@ -197,7 +197,7 @@ namespace DokanShoFSNamespace.Services
 
 				session.Execute("create table if not exists id_path (id text primary key , path text );");
 
-				session.Execute("create table if not exists name_id (name text,id text ,primary key(name,id) );");
+				session.Execute("create table if not exists name_id (name text,id text,parent_id text ,primary key(name,id) );");
 
 				session.Execute("create table if not exists id_name (id text , name text ,primary key(id,name) );");
 
@@ -438,11 +438,12 @@ namespace DokanShoFSNamespace.Services
 				fileInfo.IsDirectory = true;
 
                 this.CreateFile(pathData.parent_path, access, share, mode, options, attributes, fileInfo);
-            }
+				pathData = getPathData(path);
+			}
 
             if (pathData.pathEntry != null)
 			{
-				if ((pathData.pathEntry.Attributes & FileAttributes.Directory) > 0)
+				if (pathData.pathEntry.FileInfo.IsDirectory == true && info.IsDirectory == false)
 				{
 					throw new ArgumentException("Directory with same name already exists!");
 				}
@@ -460,7 +461,7 @@ namespace DokanShoFSNamespace.Services
 			entry.CreationTime = DateTime.Now;
 			entry.LastWriteTime = DateTime.Now;
 			entry.FullName = pathData.path;
-			entry.FileInfo = info;
+			entry.FileInfo = copyFileInfo( info);
 			entry.Length = 0;
 			entry.options = options;
 			entry.share = share;
@@ -523,9 +524,9 @@ namespace DokanShoFSNamespace.Services
 				session.Execute(qrCreate.Bind(myPath.path_id, str));
 
 
-				qrCreate = session.Prepare("insert into name_id (name,id) values (?,?);");
+				qrCreate = session.Prepare("insert into name_id (name,id,parent_id) values (?,?,?);");
 
-				session.Execute(qrCreate.Bind(str,myPath.path_id));
+				session.Execute(qrCreate.Bind(str,myPath.path_id,myPath.parent_id));
 			}
 
 
