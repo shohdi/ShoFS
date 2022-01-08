@@ -569,9 +569,30 @@ namespace DokanShoFSNamespace.Services
             return indexArr;
         }
 
+		private void deletePathId(string path, string id, ISession session)
+		{
+			var qr = session.Prepare("delete from path_id where path = ? ;");
+			session.Execute(qr.Bind(path));
+			qr = session.Prepare("delete from id_path where id = ? ;");
+			session.Execute(qr.Bind(id));
+
+			qr = session.Prepare("select * from id_name where id = ? ;");
+			var rows = session.Execute(qr.Bind(id));
+
+			foreach (var row in rows)
+            {
+				qr = session.Prepare("delete from name_id where name = ? and id=? ;");
+				session.Execute(qr.Bind(row.GetValue<string>("name"),id));
+			}
+
+			qr = session.Prepare("delete from id_name where id = ? ;");
+			session.Execute(qr.Bind(id));
 
 
-        public DokanNet.NtStatus DeleteDirectory(string fileName, DokanNet.IDokanFileInfo info)
+
+		}
+
+		public DokanNet.NtStatus DeleteDirectory(string fileName, DokanNet.IDokanFileInfo info)
 		{
 			throw new NotImplementedException();
 		}
