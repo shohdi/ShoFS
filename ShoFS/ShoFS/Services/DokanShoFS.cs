@@ -592,14 +592,96 @@ namespace DokanShoFSNamespace.Services
 
 		}
 
+		private void DetetePath(string fileName)
+        {
+			var path = fileName;
+			var pathData = getPathData(path);
+
+			System.Console.WriteLine("delete path " + pathData.path);
+
+
+			if (string.IsNullOrWhiteSpace(pathData.path_id))
+			{
+				throw new FileNotFoundException();
+			}
+
+			List<FileSystemEntry> childs = this.ListEntriesInDirectory(pathData.path);
+
+			foreach (var child in childs)
+			{
+				DetetePath(child.FullName);
+			}
+
+			using (var session = cluster.Connect(this.myDBData.KeySpace))
+			{
+				deletePathId(pathData.path, pathData.path_id, session);
+				var qr = session.Prepare("delete from meta where parent_id = ? and id = ? ;");
+				session.Execute(qr.Bind(pathData.parent_id, pathData.path_id));
+				qr = session.Prepare("delete from chunk where id = ? ;");
+				session.Execute(qr.Bind(pathData.path_id));
+			}
+		}
+
+
+		public List<FileSystemEntry> ListEntriesInDirectory(string path)
+		{
+			path = path.Trim();
+			path = path.Replace("\\", this.osSeperator);
+			string parent_id = "";
+			PathData pathData = null;
+			if (path == "/" || path == "")
+			{
+				parent_id = "root";
+			}
+			else
+			{
+				pathData = this.getPathData(path);
+				parent_id = pathData.path_id;
+			}
+
+			System.Console.WriteLine("list entries " + (parent_id == "root" ? "/" : pathData?.path));
+
+			using (var session = cluster.Connect(myDBData.KeySpace))
+			{
+				var qr = session.Prepare("select * from meta where parent_id = ? ;");
+				var rows = session.Execute(qr.Bind(parent_id));
+				List<FileSystemEntry> entries = new List<FileSystemEntry>();
+				foreach (var row in rows)
+				{
+					var path_id = row.GetValue<string>("id");
+
+					qr = session.Prepare("select * from id_path where  id = ? ;");
+					var entryRows = session.Execute(qr.Bind(path_id));
+
+					foreach (var entryRow in entryRows)
+					{
+						var pathString = entryRow.GetValue<string>("path");
+
+						var entry = JsonConvert.DeserializeObject<FileSystemEntry>(row.GetValue<string>("entry"));
+						entry.FullName = pathString;
+
+						entries.Add(entry);
+
+					}
+
+				}
+
+				return entries;
+			}
+		}
+
+
+
 		public DokanNet.NtStatus DeleteDirectory(string fileName, DokanNet.IDokanFileInfo info)
 		{
-			throw new NotImplementedException();
+			this.DetetePath(fileName);
+			return NtStatus.Success;
 		}
 
 		public DokanNet.NtStatus DeleteFile(string fileName, DokanNet.IDokanFileInfo info)
 		{
-			throw new NotImplementedException();
+			this.DetetePath(fileName);
+			return NtStatus.Success;
 		}
 
 		public DokanNet.NtStatus FindFiles(string fileName, out IList<DokanNet.FileInformation> files, DokanNet.IDokanFileInfo info)
@@ -624,7 +706,10 @@ namespace DokanShoFSNamespace.Services
 
 		public DokanNet.NtStatus GetDiskFreeSpace(out long freeBytesAvailable, out long totalNumberOfBytes, out long totalNumberOfFreeBytes, DokanNet.IDokanFileInfo info)
 		{
-			throw new NotImplementedException();
+			freeBytesAvailable = _freeSpace;
+			totalNumberOfBytes = _size;
+			totalNumberOfFreeBytes = _freeSpace;
+			return NtStatus.Success;
 		}
 
 		public DokanNet.NtStatus GetFileInformation(string fileName, out DokanNet.FileInformation fileInfo, DokanNet.IDokanFileInfo info)
