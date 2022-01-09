@@ -1,7 +1,7 @@
 ﻿using Cassandra;
 using DokanNet;
 using Newtonsoft.Json;
-using ShoFSNameSpace.Services;
+//using ShoFSNameSpace.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,6 +13,286 @@ using System.Text.RegularExpressions;
 
 namespace DokanShoFSNamespace.Services
 {
+
+	public class FileAccessModel
+	{
+		public string path { get; set; }
+
+		public string path_id { get; set; }
+
+		public string user { get; set; }
+
+		public bool read { get; set; }
+
+		public bool write { get; set; }
+	}
+
+
+	public class MyDBModel
+	{
+		public MyDBModel()
+		{
+			this.ServerIP = new List<string>();
+		}
+
+
+		public List<string> ServerIP { get; set; }
+
+
+		public int? Port { get; set; } = 9042;
+
+
+		public string UserName { get; set; }
+
+
+		public string Password { get; set; }
+
+
+
+
+		public string KeySpace { get; set; }
+
+
+	}
+
+	public class FSStream : Stream
+	{
+		MyDBModel dbModel = null;
+		PathData path = null;
+		FileMode mode;
+	    DokanNet.FileAccess access;
+		FileShare share;
+		FileOptions options;
+		Cluster cluster;
+		long blockSize;
+		private long writePosition;
+		private List<byte> writeBytes = new List<byte>();
+
+		public FSStream(MyDBModel _dbModel, PathData _path, FileMode _mode, DokanNet.FileAccess _access, FileShare _share, FileOptions _options, Cluster _cluster, long _blockSize)
+		{
+			this.dbModel = _dbModel;
+			this.path = _path;
+			this.mode = _mode;
+			this.access = _access;
+			this.share = _share;
+			this.options = _options;
+			this.cluster = _cluster;
+			this.blockSize = _blockSize;
+
+			this._canRead = true;
+
+			this._canWrite = true;
+
+			this._canSeek = true;
+
+			this._length = (long)this.path.pathEntry.Length;
+
+			if (mode == FileMode.Append)
+			{
+				this.Position = this._length;
+			}
+			else
+			{
+				this.Position = 0;
+			}
+
+			this.writePosition = this.Position;
+		}
+
+		private bool _canRead = true;
+		public override bool CanRead { get { return _canRead; } }
+
+
+		private bool _canSeek = true;
+		public override bool CanSeek { get { return _canSeek; } }
+
+		private bool _canWrite = false;
+		public override bool CanWrite { get { return _canWrite; } }
+
+
+		private long _length = 0;
+		public override long Length { get { return _length; } }
+
+
+		public override long Position { get; set; } = 0;
+
+		public override void Write(byte[] buffer, int offset, int count)
+		{
+			int written = 0;
+			while (written < count)
+			{
+				this.writeBytes.Add(buffer[offset + written]);
+				written++;
+				if ((Position + written) % this.blockSize == 0)
+				{
+					this.Flush();
+				}
+			}
+		}
+
+		public override void Flush()
+		{
+			if (this.writeBytes == null || this.writeBytes.Count == 0)
+			{
+				this.writeBytes = new List<byte>();
+				return;
+			}
+			var pos = (int)(this.Position / this.blockSize);
+			byte[] foundArr = null;
+			using (var session = cluster.Connect(this.dbModel.KeySpace))
+			{
+				var qr = session.Prepare("select * from chunk where id=? and pos=? ;");
+				var row = this.firstOrDefault(session.Execute(qr.Bind(this.path.path_id, pos)));
+				if (row != null)
+				{
+					foundArr = row.GetValue<byte[]>("chunk_data");
+					qr = session.Prepare("delete  from chunk where id=? and pos=? ;");
+					session.Execute(qr.Bind(this.path.path_id, pos));
+
+
+				}
+
+				List<byte> lstChunk = new List<byte>();
+
+				if (foundArr == null || foundArr.Length == 0)
+				{
+					lstChunk = createChunk(pos);
+				}
+				else
+				{
+					lstChunk.AddRange(foundArr);
+				}
+
+
+				var currentPos = this.Position - (pos * this.blockSize);
+				int place = 0;
+				while (currentPos < this.blockSize)
+				{
+					if (currentPos >= lstChunk.Count)
+					{
+						lstChunk.Add(this.writeBytes[place]);
+
+
+					}
+					else
+					{
+						lstChunk[(int)currentPos] = this.writeBytes[place];
+					}
+
+					place++;
+					this.Position++;
+					currentPos = this.Position - (pos * this.blockSize);
+				}
+
+				qr = session.Prepare("insert into chunk (id,pos,chunk_data) values (?,?,?) ;");
+				session.Execute(qr.Bind(this.path.path_id, pos, lstChunk.ToArray()));
+				this.writeBytes = new List<byte>();
+
+
+
+			}
+		}
+
+		private List<byte> createChunk(long pos)
+		{
+			List<byte> ret = new List<byte>();
+			long count = this.Position - (pos * this.blockSize);
+			byte[] bt = new byte[count];
+			ret.AddRange(bt);
+			return ret;
+		}
+
+		private Row firstOrDefault(RowSet rows)
+		{
+			Row ret = null;
+			foreach (var row in rows)
+			{
+				ret = row;
+				break;
+			}
+
+			return ret;
+		}
+
+
+		public override int Read(byte[] buffer, int offset, int count)
+		{
+
+
+			int readed = 0;
+
+			using (var session = cluster.Connect(dbModel.KeySpace))
+			{
+
+				while (readed < count && Position < Length)
+				{
+					var pos = (long)(this.Position / this.blockSize);
+					var qr = session.Prepare("select * from chunk where id=? and pos=? ;");
+					var rows = session.Execute(qr.Bind(this.path.path_id, pos));
+					Row row = null;
+					foreach (var rowin in rows)
+					{
+						row = rowin;
+						break;
+					}
+
+					byte[] btData = new byte[0];
+					if (row != null)
+					{
+						btData = row.GetValue<byte[]>("chunk_data");
+
+					}
+
+					while (btData != null && btData.Length > 0 && this.Position < ((pos * blockSize) + btData.Length) && readed < count && Position < Length)
+					{
+						var ind = this.Position - ((pos * blockSize));
+						buffer[offset + readed] = btData[ind];
+						readed++;
+						this.Position++;
+					}
+
+				}
+
+				return readed;
+			}
+		}
+
+		public override long Seek(long offset, SeekOrigin origin)
+		{
+			if (origin == SeekOrigin.Begin)
+			{
+				this.Position = offset;
+			}
+			else if (origin == SeekOrigin.Current)
+			{
+				this.Position = this.Position + offset;
+			}
+			else if (origin == SeekOrigin.End)
+			{
+				this.Position = this.Length - offset;
+			}
+
+			return this.Position;
+		}
+
+		public override void SetLength(long value)
+		{
+			this._length = value;
+			this.path.pathEntry.Length = (long)value;
+			using (var session = cluster.Connect(dbModel.KeySpace))
+			{
+				var qr = session.Prepare("update meta set entry = ? where parent_id = ? and id = ? ;");
+				session.Execute(qr.Bind(JsonConvert.SerializeObject(this.path.pathEntry), this.path.parent_id, this.path.path_id));
+
+			}
+		}
+
+
+	}
+
+
+
+
 	public class PathData
 	{
 		public string parent_id { get; set; }
@@ -34,6 +314,10 @@ namespace DokanShoFSNamespace.Services
 
 	}
 
+
+
+
+
     public class ShoFileInfo : IDokanFileInfo
     {
 		[JsonIgnore]
@@ -45,17 +329,13 @@ namespace DokanShoFSNamespace.Services
 			}
 			set
 			{
-				_context = (ulong)value;
+				_context = value;
 			}
 		}
 
-		private ulong _context;
+		private object _context;
 
-		public ulong LongContext { get {
-				return _context;
-			} set {
-				_context = value;
-			} }
+		
 
 
 		public bool DeleteOnClose { get; set; } = false;
@@ -419,6 +699,17 @@ namespace DokanShoFSNamespace.Services
 			System.Console.WriteLine("Close File " + fileName);
 		}
 
+		private Stream OpenFile(string fileName, DokanNet.FileAccess access, FileShare share, FileMode mode, FileOptions options, FileAttributes attributes, DokanNet.IDokanFileInfo info)
+		{
+			
+
+			var pathData = getPathData(fileName);
+			System.Console.WriteLine("return stream for " + pathData.path);
+			return new FSStream(this.myDBData, pathData, mode, access, share, options, this.cluster, this.blockSize);
+
+		}
+
+
 		public DokanNet.NtStatus CreateFile(string fileName, DokanNet.FileAccess access, FileShare share, FileMode mode, FileOptions options, FileAttributes attributes, DokanNet.IDokanFileInfo info)
 		{
 			string path = fileName;
@@ -465,6 +756,10 @@ namespace DokanShoFSNamespace.Services
 			entry.Length = 0;
 			entry.options = options;
 			entry.share = share;
+			if (!info.IsDirectory)
+			{
+				entry.FileInfo.Context = this.OpenFile( fileName,  access,  share,  mode,  options,  attributes,  info);
+			}
 			
 				
 				var ent = JsonConvert.SerializeObject(entry);
